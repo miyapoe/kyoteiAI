@@ -99,6 +99,9 @@ if st.button("取得＆予測", width="stretch"):
     st.subheader("📋 出走表＋展示（取得データ）")
     st.dataframe(df_raw, width="stretch", hide_index=True)
 
+    st.subheader("🔎 df_raw.columns（確認用）")
+    st.write(list(df_raw.columns))
+
     st.subheader("🌤 気象")
     st.json(weather)
 
