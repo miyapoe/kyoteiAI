@@ -1,6 +1,5 @@
 # predict.py
 import os
-import joblib
 import pandas as pd
 import numpy as np
 
@@ -10,42 +9,48 @@ except Exception:
     lgb = None
 
 
-def _is_nonempty_file(path: str) -> bool:
-    return os.path.exists(path) and os.path.getsize(path) > 1024  # 1KB以上を「中身あり」扱い
+def _candidate_paths(names):
+    """ルート直下 / models/ の両方を探す"""
+    out = []
+    for n in names:
+        out.append(n)
+        out.append(os.path.join("models", n))
+    return out
+
+
+def _pick_existing(paths):
+    for p in paths:
+        if os.path.exists(p) and os.path.getsize(p) > 0:
+            return p
+    return None
 
 
 def load_models():
     """
     優先順：
       1) model1-3.txt (LightGBM Booster)
-      2) model1-3.pkl (joblib)
+      2) （非推奨）pkl は基本読まない（Python差で壊れやすい）
+
     戻り値: (m1, m2, m3, info)
     """
-    # --- txt ---
-    if lgb is not None:
-        txts = ["model1.txt", "model2.txt", "model3.txt"]
-        if all(_is_nonempty_file(p) for p in txts):
-            try:
-                m1 = lgb.Booster(model_file=txts[0])
-                m2 = lgb.Booster(model_file=txts[1])
-                m3 = lgb.Booster(model_file=txts[2])
-                return m1, m2, m3, "LightGBM Booster (.txt)"
-            except Exception as e:
-                # txt が壊れてるなど
-                return None, None, None, f"txt load failed: {e}"
+    if lgb is None:
+        return None, None, None, "lightgbm is not installed"
 
-    # --- pkl（非推奨：互換問題が起きやすい）---
-    pkls = ["model1.pkl", "model2.pkl", "model3.pkl"]
-    if all(os.path.exists(p) for p in pkls):
-        try:
-            m1 = joblib.load(pkls[0])
-            m2 = joblib.load(pkls[1])
-            m3 = joblib.load(pkls[2])
-            return m1, m2, m3, "joblib (.pkl)"
-        except Exception as e:
-            return None, None, None, f"pkl load failed: {e}"
+    # txt を探す
+    m1p = _pick_existing(_candidate_paths(["model1.txt"]))
+    m2p = _pick_existing(_candidate_paths(["model2.txt"]))
+    m3p = _pick_existing(_candidate_paths(["model3.txt"]))
 
-    return None, None, None, "no models"
+    if not (m1p and m2p and m3p):
+        return None, None, None, "model*.txt not found (put in repo root or models/)"
+
+    try:
+        m1 = lgb.Booster(model_file=m1p)
+        m2 = lgb.Booster(model_file=m2p)
+        m3 = lgb.Booster(model_file=m3p)
+        return m1, m2, m3, f"LightGBM Booster (.txt) [{m1p}, {m2p}, {m3p}]"
+    except Exception as e:
+        return None, None, None, f"txt load failed: {e}"
 
 
 def _model_feature_names(model):
@@ -63,30 +68,30 @@ def _model_feature_names(model):
     return None
 
 
-def _predict_proba(model, X: pd.DataFrame) -> np.ndarray:
-    # Booster
-    if hasattr(model, "predict") and "lightgbm.basic" in str(type(model)).lower():
-        return np.asarray(model.predict(X))
-    # sklearn-like
-    if hasattr(model, "predict_proba"):
-        p = model.predict_proba(X)
-        return np.asarray(p)[:, 1]
-    # fallback
-    return np.asarray(model.predict(X))
+def _predict_proba_booster(model, X: pd.DataFrame) -> np.ndarray:
+    # LightGBM Booster: binaryなら確率、multiなら各クラス確率になる
+    p = model.predict(X)
+    p = np.asarray(p)
+    # multi-class の場合は「class=1」を返す等、用途に合わせる必要あり
+    if p.ndim == 2 and p.shape[1] >= 2:
+        return p[:, 1]
+    return p.reshape(-1)
 
 
 def _align_X_to_model(model, X: pd.DataFrame) -> pd.DataFrame:
     feats = _model_feature_names(model)
-    if feats is None:
-        # そのまま（モデル側が順序依存なら事故るが、情報が無いので）
-        return X.copy()
-
     X2 = X.copy()
+
+    if feats is None:
+        # 情報が取れないならそのまま（事故る可能性はある）
+        return X2
+
     # 欠けてる列は 0 埋め
     for c in feats:
         if c not in X2.columns:
             X2[c] = 0
-    # 余分列は無視して並べ替え
+
+    # 余分列は捨てて並べ替え
     X2 = X2[feats]
     return X2
 
@@ -99,13 +104,18 @@ def predict_trifecta(model1, model2, model3, df_feat: pd.DataFrame, df_raw: pd.D
     if df_feat is None or df_feat.empty:
         raise ValueError("df_feat is empty")
 
+    # 念のため数値に寄せる
+    df_feat = df_feat.select_dtypes(include=["number"]).copy()
+    if df_feat.empty:
+        raise ValueError("df_feat has no numeric columns")
+
     X1 = _align_X_to_model(model1, df_feat)
     X2 = _align_X_to_model(model2, df_feat)
     X3 = _align_X_to_model(model3, df_feat)
 
-    p1 = _predict_proba(model1, X1)
-    p2 = _predict_proba(model2, X2)
-    p3 = _predict_proba(model3, X3)
+    p1 = _predict_proba_booster(model1, X1)
+    p2 = _predict_proba_booster(model2, X2)
+    p3 = _predict_proba_booster(model3, X3)
 
     n = len(df_feat)
     if n < 3:
@@ -133,7 +143,7 @@ def predict_trifecta(model1, model2, model3, df_feat: pd.DataFrame, df_raw: pd.D
                 rows.append((i, j, k, score))
 
     rows.sort(key=lambda x: x[3], reverse=True)
-    rows = rows[:top_n]
+    rows = rows[: int(top_n)]
 
     out = []
     for i, j, k, s in rows:
