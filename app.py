@@ -2,6 +2,7 @@
 import os
 import streamlit as st
 import pandas as pd
+from predict import load_models, predict_trifecta, get_last_align
 
 from scraper import fetch_race_json
 
