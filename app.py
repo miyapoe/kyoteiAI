@@ -140,10 +140,31 @@ def predict_trifecta(model1, model2, model3, df_feat: pd.DataFrame, top_n: int =
 # Run
 # -----------------------------
 
-    model1 = model2 = model3 = None
-st.warning("※ モデル未読込（データ取得のみ動作）")
+# -----------------------------
+# Models (load once)
+# -----------------------------
+import joblib
 
+@st.cache_resource
+def load_models():
+    m1 = joblib.load("model1.pkl")
+    m2 = joblib.load("model2.pkl")
+    m3 = joblib.load("model3.pkl")
+    return m1, m2, m3
 
+model1 = model2 = model3 = None
+model_error = None
+
+try:
+    model1, model2, model3 = load_models()
+    st.success("✅ モデル読込OK（model1-3.pkl）")
+except Exception as e:
+    model_error = e
+    st.warning(f"※ モデル未読込（データ取得のみ動作）: {e}")
+
+# -----------------------------
+# Run
+# -----------------------------
 if st.button("取得＆予測", use_container_width=True):
     with st.spinner("データ取得中..."):
         try:
@@ -166,6 +187,13 @@ if st.button("取得＆予測", use_container_width=True):
 
     with st.spinner("特徴量作成中..."):
         df_feat = build_features(df_raw)
+
+    # ここが重要：モデルが無いなら予測しない
+    if model1 is None or model2 is None or model3 is None:
+        st.error("❌ モデルが読み込めていないため予測できません（model1-3.pkl を確認）")
+        if model_error:
+            st.caption(f"詳細: {model_error}")
+        st.stop()
 
     with st.spinner("LightGBM予測中..."):
         try:
