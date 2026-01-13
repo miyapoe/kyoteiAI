@@ -61,39 +61,29 @@ def _model_feature_names(model):
 
 
 def _align_X_to_model(model, X: pd.DataFrame, verbose: bool = False) -> pd.DataFrame:
-    """
-    学習時の列(feats)に合わせて並べ替え＋足りない列を0埋め＋余分列を捨てる
-    """
     feats = _model_feature_names(model)
     if feats is None:
-        # どうしようもないのでそのまま
         if verbose:
-            print("[align] feats=None -> use X as-is")
+            LAST_ALIGN["feats_none"] = True
         return X.copy()
 
     X2 = X.copy()
-
     missing = [c for c in feats if c not in X2.columns]
     hit = len(feats) - len(missing)
 
-    # 欠け列は0
     for c in missing:
         X2[c] = 0
-
-    # 余分列は落として順序合わせ
     X2 = X2[feats]
 
     if verbose:
-        print(
-            f"[align] model_feats={len(feats)} hit={hit} missing={len(missing)} "
-            f"sample_missing={missing[:10]}"
-        )
-        # 行ごとに同じになってないか軽く診断
-        nunique_min = X2.nunique().min() if len(X2.columns) else None
-        print(f"[align] X2 shape={X2.shape} nunique_min={nunique_min}")
+        LAST_ALIGN["model_feats"] = len(feats)
+        LAST_ALIGN["hit"] = hit
+        LAST_ALIGN["missing"] = len(missing)
+        LAST_ALIGN["sample_missing"] = missing[:30]
+        # 6艇が同じ特徴量になってないか目安
+        LAST_ALIGN["nunique_min"] = int(X2.nunique().min()) if X2.shape[1] > 0 else None
 
     return X2
-
 
 def _predict_proba_binary(model, X: pd.DataFrame) -> np.ndarray:
     """
