@@ -137,10 +137,9 @@ def predict_trifecta(model1, model2, model3, df_feat: pd.DataFrame, top_n: int =
 # Run
 # -----------------------------
 try:
-    model1, model2, model3 = load_models()
-except Exception as e:
-    st.error(f"モデル読み込み失敗: {e}")
-    st.stop()
+    model1 = model2 = model3 = None
+st.warning("※ モデル未読込（データ取得のみ動作）")
+
 
 if st.button("取得＆予測", use_container_width=True):
     with st.spinner("データ取得中..."):
