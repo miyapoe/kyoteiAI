@@ -5,6 +5,9 @@ import pandas as pd
 import streamlit as st
 
 from scraper import fetch_race_json
+import inspect
+st.write("fetch_race_json sig:", str(inspect.signature(fetch_race_json)))
+
 
 st.set_page_config(page_title="競艇AI（JSON取得＋LightGBM予測）", layout="wide")
 st.title("🚤 競艇AI（JSON取得＋LightGBM予測）")
