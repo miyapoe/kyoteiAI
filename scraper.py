@@ -128,48 +128,36 @@ def fetch_race_json(race_date: str, stadium: int, race_no: int):
             df_prog = df_prog.merge(df_prev, on="racer_boat_number", how="left")
 
     # ---- merge results (rank/finish) ----
-    # resultsの構造はデータによって揺れるので、boatsとarrival_order両方を見に行く
     if isinstance(res_race, dict):
-        # 1) boats内に着順が入っている場合
-        df_res_boats = _boats_to_df(res_race.get("boats"))
-        df_res_boats = _ensure_boat_number(df_res_boats)
 
-        # 着順カラム候補
-        rank_col = None
-        for c in ["racer_rank", "rank", "arrival", "finish", "racer_arrival"]:
-            if c in df_res_boats.columns:
-                rank_col = c
-                break
+        # --- A) arrival_order がある場合（最優先・これが一番確実） ---
+        arrival = res_race.get("arrival_order")
 
-        if not df_res_boats.empty and "racer_boat_number" in df_res_boats.columns and rank_col:
-            df_rank = df_res_boats[["racer_boat_number", rank_col]].copy()
-            df_rank = df_rank.rename(columns={rank_col: "rank"})
-            df_rank["rank"] = pd.to_numeric(df_rank["rank"], errors="coerce")
+        if isinstance(arrival, list) and len(arrival) > 0:
+            df_rank = pd.DataFrame({
+                "racer_boat_number": arrival,
+                "rank": list(range(1, len(arrival) + 1))
+            })
             df_prog = df_prog.merge(df_rank, on="racer_boat_number", how="left")
 
-        # 2) arrival_order がある場合（上書き/補完）
-        arrival = res_race.get("arrival_order") or res_race.get("arrivalOrder")
-        if isinstance(arrival, list) and len(arrival) > 0 and "racer_boat_number" in df_prog.columns:
-            # arrivalが艇番配列の想定： ["1","2","3",...]
-            rank_map = {}
-            for i, v in enumerate(arrival):
-                try:
-                    b = int(v)
-                    rank_map[b] = i + 1
-                except Exception:
-                    continue
-            if rank_map:
-                df_prog["rank"] = df_prog["racer_boat_number"].map(rank_map)
+        # --- B) boats 内に rank がある場合（保険） ---
+        else:
+            df_res_boats = _boats_to_df(res_race.get("boats"))
+            df_res_boats = _ensure_boat_number(df_res_boats)
 
-        # 3) 3連単払戻（あればmetaに入れる）
-        # データ構造が違うので安全に拾うだけ
-        meta["trifecta_payout"] = res_race.get("trifecta_payout") or res_race.get("trifectaPayout")
+            rank_col = None
+            for c in ["racer_rank", "rank", "arrival", "finish", "racer_arrival"]:
+                if c in df_res_boats.columns:
+                    rank_col = c
+                    break
 
-    # ---- sort & label ----
-    if "racer_boat_number" in df_prog.columns:
-        df_prog = df_prog.sort_values("racer_boat_number").reset_index(drop=True)
+            if rank_col and "racer_boat_number" in df_res_boats.columns:
+                df_rank = df_res_boats[["racer_boat_number", rank_col]].copy()
+                df_rank = df_rank.rename(columns={rank_col: "rank"})
+                df_rank["rank"] = pd.to_numeric(df_rank["rank"], errors="coerce")
+                df_prog = df_prog.merge(df_rank, on="racer_boat_number", how="left")
 
-    # rankからラベル列（学習用）
+    # ---- labels (教師データ) ----
     if "rank" in df_prog.columns:
         df_prog["label_1st"] = (df_prog["rank"] == 1).astype(int)
         df_prog["label_2nd"] = (df_prog["rank"] == 2).astype(int)
@@ -179,23 +167,13 @@ def fetch_race_json(race_date: str, stadium: int, race_no: int):
         df_prog["label_2nd"] = 0
         df_prog["label_3rd"] = 0
 
+    # ---- race keys（学習用）----
+    df_prog["race_date"] = race_date
+    df_prog["stadium"] = stadium
+    df_prog["race_no"] = race_no
+
+    # 並びを艇番順に
+    if "racer_boat_number" in df_prog.columns:
+        df_prog = df_prog.sort_values("racer_boat_number").reset_index(drop=True)
+
     return df_prog, meta
-
-
-def fetch_day_all_races(race_date: str, stadium: int):
-    """
-    その日のその場の 1R〜12R をまとめて取って、学習/検証用に使える形で返す。
-    return: df_all（行=レース×艇）
-    """
-    dfs = []
-    for rno in range(1, 13):
-        df_r, meta = fetch_race_json(race_date, stadium, rno)
-        if df_r is None or df_r.empty:
-            continue
-        df_r["race_date"] = race_date
-        df_r["race_no"] = rno
-        df_r["stadium"] = stadium
-        dfs.append(df_r)
-    if not dfs:
-        return pd.DataFrame()
-    return pd.concat(dfs, ignore_index=True)
