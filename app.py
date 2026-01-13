@@ -51,10 +51,15 @@ if st.button("📥 取得＆予測", use_container_width=True):
 
     # 見やすい表示
     show_cols = [
-        "racer_boat_number","racer_name","racer_number","racer_weight",
-        "racer_exhibition_time","racer_start_timing","racer_tilt_adjustment",
-        "wind","wave","temperature","water_temperature"
-    ]
+    "racer_boat_number",
+    "racer_name",
+    "racer_number",
+    "racer_weight",
+    "wind",
+    "wave",
+    "temperature",
+    "water_temperature",
+]
     cols = [c for c in show_cols if c in df_raw.columns]
     st.subheader("📋 取得データ")
     st.dataframe(df_raw[cols] if cols else df_raw, use_container_width=True, hide_index=True)
