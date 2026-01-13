@@ -51,4 +51,4 @@ if st.button("取得 & 予測"):
     # 表示（出走表）
     # -----------------------------
     st.subheader("📋 出走表")
-    st.dataframe(df_raw, use_
+    st.dataframe(df_raw, use_)
