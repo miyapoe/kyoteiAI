@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import joblib
 from scraper import scrape_race_data
-from feature_engineer import create_features
+from features import create_features
 from predictor import predict_trifecta
 
 st.title("競艇AI予測アプリ")
