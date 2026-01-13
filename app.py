@@ -141,6 +141,8 @@ if st.button("取得＆予測", use_container_width=True):
                 top_n=int(top_n),
                 verbose_align=True,   # ★これが重要
             )
+            st.subheader("🪵 align診断（モデル特徴量と一致してる？）")
+            st.json(get_last_align())
         except Exception as e:
             st.error(f"❌ 予測失敗: {e}")
             st.stop()
