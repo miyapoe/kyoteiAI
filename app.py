@@ -12,7 +12,7 @@ except Exception:
     try:
         from features import build_features  # type: ignore
     except Exception:
-        build_features = None  # 後でフォールバック
+        build_features = None
 
 from predict import load_models, predict_trifecta
 
@@ -38,15 +38,35 @@ with c4:
     top_n = st.slider("表示件数（予測）", min_value=5, max_value=30, value=10, step=1)
 
 # -----------------------------
-# Model load (safe)
+# Model file check
 # -----------------------------
-with st.expander("📦 モデルファイルチェック", expanded=False):
-    for fn in ["model1.txt", "model2.txt", "model3.txt", "model1.pkl", "model2.pkl", "model3.pkl"]:
-        st.write(f"- {fn}: exists={os.path.exists(fn)} size={os.path.getsize(fn) if os.path.exists(fn) else 0}")
+def _file_info(path: str) -> str:
+    if not os.path.exists(path):
+        return "missing"
+    return f"exists size={os.path.getsize(path)}"
 
-model1, model2, model3, model_info = load_models()
+with st.expander("📦 モデルファイルチェック", expanded=False):
+    candidates = [
+        "model1.txt", "model2.txt", "model3.txt",
+        "models/model1.txt", "models/model2.txt", "models/model3.txt",
+        "model1.pkl", "model2.pkl", "model3.pkl",
+        "models/model1.pkl", "models/model2.pkl", "models/model3.pkl",
+        "feature_names.csv", "models/feature_names.csv",
+    ]
+    for fn in candidates:
+        st.write(f"- {fn}: {_file_info(fn)}")
+
+# -----------------------------
+# Load models (cached)
+# -----------------------------
+@st.cache_resource(show_spinner=False)
+def _load_models_cached():
+    return load_models()
+
+model1, model2, model3, model_info = _load_models_cached()
+
 if model1 is None or model2 is None or model3 is None:
-    st.warning("※ モデル未読込（データ取得のみ動作）")
+    st.warning(f"※ モデル未読込（データ取得のみ動作） / info: {model_info}")
 else:
     st.success(f"✅ モデル読込OK: {model_info}")
 
@@ -54,8 +74,10 @@ else:
 # Run
 # -----------------------------
 if st.button("取得＆予測", use_container_width=True):
+    # ---- Fetch ----
     with st.spinner("データ取得中..."):
         try:
+            # ★ keyword ではなく位置引数で固定（race_date問題回避）
             df_raw, weather = fetch_race_json(race_date, int(stadium), int(race_no))
         except Exception as e:
             st.error(f"❌ 取得失敗: {e}")
@@ -73,7 +95,7 @@ if st.button("取得＆予測", use_container_width=True):
     st.subheader("🌤 気象")
     st.json(weather)
 
-    # 特徴量
+    # ---- Features ----
     with st.spinner("特徴量作成中..."):
         if build_features is None:
             # 最低限フォールバック（数値列だけ）
@@ -81,17 +103,29 @@ if st.button("取得＆予測", use_container_width=True):
         else:
             df_feat = build_features(df_raw)
 
+    if df_feat is None or df_feat.empty:
+        st.error("❌ 特徴量が空です（features.py の処理を確認）")
+        st.stop()
+
+    # ★ 念のため数値だけ（モデルが数値前提）
+    df_feat = df_feat.select_dtypes(include=["number"]).copy()
+
     st.subheader("🧪 特徴量（先頭）")
     st.dataframe(df_feat.head(10), use_container_width=True, hide_index=True)
 
-    # 予測
+    # ---- Predict ----
     if model1 is None or model2 is None or model3 is None:
-        st.error("❌ モデルが読み込めていないため予測できません（model1-3 を作り直して配置してください）")
+        st.error("❌ モデルが読み込めていないため予測できません（model1-3.txt を配置してください）")
         st.stop()
 
     with st.spinner("LightGBM予測中..."):
         try:
-            df_pred = predict_trifecta(model1, model2, model3, df_feat, df_raw=df_raw, top_n=int(top_n))
+            df_pred = predict_trifecta(
+                model1, model2, model3,
+                df_feat,
+                df_raw=df_raw,
+                top_n=int(top_n),
+            )
         except Exception as e:
             st.error(f"❌ 予測失敗: {e}")
             st.stop()
