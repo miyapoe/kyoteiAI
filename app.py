@@ -3,7 +3,7 @@ import pandas as pd
 import joblib
 from scraper import scrape_race_data
 from features import create_features
-from predictor import predict_trifecta
+from predict import predict_trifecta
 
 st.title("競艇AI予測アプリ")
 
