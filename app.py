@@ -113,7 +113,7 @@ if st.button("取得＆予測", use_container_width=True):
         if build_features is None:
             df_feat = df_raw.select_dtypes(include=["number"]).copy()
         else:
-            df_feat = build_features(df_raw)
+            df_feat = build_features(df_raw, stadium=int(stadium), race_no=int(race_no))
 
     if df_feat is None or df_feat.empty:
         st.error("❌ 特徴量が空です（features.py の処理を確認）")
