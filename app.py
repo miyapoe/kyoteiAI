@@ -22,6 +22,25 @@ except Exception:
 # 予測モジュール
 from predict import load_models, predict_trifecta
 
+
+# -----------------------------
+# Align診断用
+# -----------------------------
+def _get_model_feature_names(m):
+    # LightGBM Booster
+    if hasattr(m, "feature_name"):
+        try:
+            return list(m.feature_name())
+        except Exception:
+            pass
+    # sklearn系
+    if hasattr(m, "feature_names_in_"):
+        return list(getattr(m, "feature_names_in_"))
+    if hasattr(m, "feature_name_"):
+        return list(getattr(m, "feature_name_"))
+    return None
+
+
 st.set_page_config(page_title="競艇AI（JSON取得 + LightGBM予測）", layout="wide")
 st.title("🚤 競艇AI（JSON取得 + LightGBM予測）")
 st.caption("出走表(programs)・展示/気象(previews)を JSON から取得して表示。モデルがあれば三連単予測もします。")
@@ -50,7 +69,9 @@ with c4:
 # -----------------------------
 with st.expander("📦 モデルファイルチェック", expanded=False):
     for fn in ["model1.txt", "model2.txt", "model3.txt", "model1.pkl", "model2.pkl", "model3.pkl"]:
-        st.write(f"- {fn}: exists={os.path.exists(fn)} size={os.path.getsize(fn) if os.path.exists(fn) else 0}")
+        st.write(
+            f"- {fn}: exists={os.path.exists(fn)} size={os.path.getsize(fn) if os.path.exists(fn) else 0}"
+        )
 
 model1, model2, model3, model_info = load_models()
 if model1 is None or model2 is None or model3 is None:
@@ -90,16 +111,42 @@ if st.button("取得＆予測", width="stretch"):
             df_feat = df_raw.select_dtypes(include=["number"]).copy()
         else:
             # ★重要：余計な引数を渡さない（TypeError防止）
-            # build_features が (df, stadium, race_no) を受け取れる実装なら渡す
+            # build_features が (df, stadium=..., race_no=...) を受け取れる実装なら渡す
             try:
                 df_feat = build_features(df_raw, stadium=int(stadium), race_no=int(race_no))  # type: ignore
             except TypeError:
-                # create_features(df) 型しかない場合
+                # build_features(df) / create_features(df) 型しかない場合
                 df_feat = build_features(df_raw)  # type: ignore
 
     if df_feat is None or df_feat.empty:
         st.error("❌ 特徴量が空です（features.py の処理を確認してください）")
         st.stop()
+
+    # -----------------------------
+    # Align診断（ここが「消えてた」原因：このブロックが無かった）
+    # -----------------------------
+    with st.expander("🪵 align診断（モデル特徴量と一致してる？）", expanded=False):
+        if model1 is None:
+            st.info("モデル未読込なので診断できません")
+        else:
+            feats = _get_model_feature_names(model1) or []
+            cols = set(df_feat.columns)
+
+            hit = [f for f in feats if f in cols]
+            missing = [f for f in feats if f not in cols]
+
+            nunique_min = int(df_feat.nunique(dropna=False).min()) if not df_feat.empty else 0
+
+            st.json({
+                "model_feats": len(feats),
+                "hit": len(hit),
+                "missing": len(missing),
+                "sample_missing": missing[:20],
+                "nunique_min": nunique_min,
+            })
+
+            if missing:
+                st.warning("missing がある＝モデルが期待する特徴量が足りないので、0埋めされて精度が落ちやすいです。")
 
     st.subheader("🧪 特徴量（先頭）")
     st.dataframe(df_feat.head(10), width="stretch", hide_index=True)
