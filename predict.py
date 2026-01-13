@@ -16,6 +16,11 @@ import joblib
 import pandas as pd
 import numpy as np
 
+LAST_ALIGN = {}
+
+def get_last_align():
+    return LAST_ALIGN
+
 try:
     import lightgbm as lgb
 except Exception:
