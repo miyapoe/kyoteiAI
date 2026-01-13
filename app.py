@@ -1,205 +1,134 @@
 # app.py
-import itertools
+import os
+import streamlit as st
 import joblib
 import pandas as pd
-import streamlit as st
 
 from scraper import fetch_race_json
-import inspect
-st.write("fetch_race_json sig:", str(inspect.signature(fetch_race_json)))
+from predict import build_features, predict_trifecta
 
 
+# -----------------------------
+# Page
+# -----------------------------
 st.set_page_config(page_title="競艇AI（JSON取得＋LightGBM予測）", layout="wide")
 st.title("🚤 競艇AI（JSON取得＋LightGBM予測）")
 
+
 # -----------------------------
-# UI
+# Sidebar / Inputs
 # -----------------------------
-c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
-with c1:
-    race_date = st.text_input("開催日（YYYYMMDD）", "20260112")
-with c2:
-    stadium = st.number_input("場コード（※ここは1）", min_value=1, max_value=24, value=1, step=1)
-with c3:
+col1, col2, col3, col4 = st.columns([2, 2, 2, 2])
+
+with col1:
+    race_date = st.text_input("開催日（YYYYMMDD）", value="20260112")
+
+with col2:
+    # あなたのUIの通り「ここは1」前提にしているなら default=1
+    stadium = st.number_input("場コード（※ここは1）", min_value=1, max_value=30, value=1, step=1)
+
+with col3:
     race_no = st.number_input("レース番号", min_value=1, max_value=12, value=1, step=1)
-with c4:
-    top_n = st.slider("表示件数（予測）", 5, 60, 10)
+
+with col4:
+    top_n = st.slider("表示件数（予測）", min_value=1, max_value=30, value=10, step=1)
+
 
 # -----------------------------
-# Model load
+# Utils
 # -----------------------------
-@st.cache_resource
-def load_models():
-    m1 = joblib.load("model1.pkl")
-    m2 = joblib.load("model2.pkl")
-    m3 = joblib.load("model3.pkl")
-    return m1, m2, m3
+def _validate_date(s: str) -> bool:
+    return isinstance(s, str) and len(s) == 8 and s.isdigit()
 
-def _get_feature_names(model):
-    # Booster
-    if hasattr(model, "feature_name"):
-        return list(model.feature_name())
-    # sklearn wrapper
-    if hasattr(model, "booster_"):
-        return list(model.booster_.feature_name())
-    if hasattr(model, "feature_name_"):
-        return list(model.feature_name_)
-    raise ValueError("モデルから特徴量名を取得できません")
-
-def _align_to_model(X: pd.DataFrame, model) -> pd.DataFrame:
-    feat = _get_feature_names(model)
-    for c in feat:
-        if c not in X.columns:
-            X[c] = 0
-    return X[feat]
-
-def build_features(df_raw: pd.DataFrame) -> pd.DataFrame:
-    df = df_raw.copy()
-
-    # 数値化（存在する列だけ）
-    num_cols = [
-        "racer_boat_number",
-        "racer_number",
-        "racer_weight",
-        "racer_exhibition_time",
-        "racer_start_timing",
-        "racer_tilt_adjustment",
-        "wind",
-        "wave",
-        "temperature",
-        "water_temperature",
-        "racer_average_start_timing",
-        "racer_national_top_1_percent",
-        "racer_national_top_2_percent",
-        "racer_national_top_3_percent",
-        "racer_local_top_1_percent",
-        "racer_local_top_2_percent",
-        "racer_local_top_3_percent",
-        "racer_assigned_motor_top_2_percent",
-        "racer_assigned_motor_top_3_percent",
-        "racer_assigned_boat_top_2_percent",
-        "racer_assigned_boat_top_3_percent",
-    ]
-    for c in num_cols:
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-
-    # 展示順位特徴量
-    if "racer_exhibition_time" in df.columns:
-        df["exh_time_rank"] = df["racer_exhibition_time"].rank(method="min")
-    if "racer_start_timing" in df.columns:
-        df["exh_st_rank"] = df["racer_start_timing"].rank(method="min")
-
-    return df
-
-def proba(model, X):
-    if hasattr(model, "predict_proba"):
-        return model.predict_proba(X)
-    return model.predict(X)
-
-def predict_trifecta(model1, model2, model3, df_feat: pd.DataFrame, top_n: int = 10) -> pd.DataFrame:
-    # 予測用X（文字列列も含む → dummiesで展開）
-    X = df_feat.copy()
-    # 予測に邪魔な列があれば落とす
-    drop_cols = [c for c in ["racer_name"] if c in X.columns]
-    if drop_cols:
-        X = X.drop(columns=drop_cols)
-
-    X = pd.get_dummies(X, dummy_na=True)
-
-    X1 = _align_to_model(X.copy(), model1)
-    X2 = _align_to_model(X.copy(), model2)
-    X3 = _align_to_model(X.copy(), model3)
-
-    p1 = proba(model1, X1)
-    p2 = proba(model2, X2)
-    p3 = proba(model3, X3)
-
-    boats = df_feat["racer_boat_number"].astype(int).tolist()
-
-    # 前提：クラスが1〜6（インデックス0〜5）に対応してる想定
-    def getp(p, boat_num):
-        idx = boat_num - 1
-        if idx < 0 or idx >= p.shape[1]:
-            return 0.0
-        # 行も同じ並び（艇番順）前提：念のため boat_num-1 行を参照
-        ridx = boat_num - 1
-        if ridx < 0 or ridx >= p.shape[0]:
-            ridx = 0
-        return float(p[ridx][idx])
-
-    rows = []
-    for a, b, c in itertools.permutations(boats, 3):
-        score = getp(p1, a) * getp(p2, b) * getp(p3, c)
-        rows.append({"三連単": f"{a}-{b}-{c}", "score": score})
-
-    out = pd.DataFrame(rows).sort_values("score", ascending=False).head(top_n).reset_index(drop=True)
-    return out
-
-# -----------------------------
-# Run
-# -----------------------------
-
-# -----------------------------
-# Models (load once)
-# -----------------------------
-import joblib
 
 @st.cache_resource
-def load_models():
-    m1 = joblib.load("model1.pkl")
-    m2 = joblib.load("model2.pkl")
-    m3 = joblib.load("model3.pkl")
+def load_models_debug():
+    """モデル存在確認→ロード。失敗したら例外を上へ投げる"""
+    paths = ["model1.pkl", "model2.pkl", "model3.pkl"]
+
+    st.write("### 📦 モデルファイルチェック")
+    for p in paths:
+        exists = os.path.exists(p)
+        size = os.path.getsize(p) if exists else None
+        st.write(f"- `{p}` exists={exists} size={size}")
+
+    m1 = joblib.load(paths[0])
+    m2 = joblib.load(paths[1])
+    m3 = joblib.load(paths[2])
     return m1, m2, m3
 
-model1 = model2 = model3 = None
-model_error = None
+
+# -----------------------------
+# Model load (A: show real error)
+# -----------------------------
+st.info("※ まずモデルを読み込みます（失敗時は詳細を表示して停止します）")
 
 try:
-    model1, model2, model3 = load_models()
-    st.success("✅ モデル読込OK（model1-3.pkl）")
+    model1, model2, model3 = load_models_debug()
+    st.success("✅ モデル読込OK")
 except Exception as e:
-    model_error = e
-    st.warning(f"※ モデル未読込（データ取得のみ動作）: {e}")
+    st.error("❌ モデルロード失敗（詳細）")
+    st.exception(e)
+    st.stop()
+
 
 # -----------------------------
 # Run
 # -----------------------------
 if st.button("取得＆予測", use_container_width=True):
+    if not _validate_date(race_date):
+        st.error("❌ 開催日は YYYYMMDD（8桁数字）で入力してください")
+        st.stop()
+
+    # ---- Fetch ----
     with st.spinner("データ取得中..."):
         try:
+            # 位置引数で呼ぶ（キーワード引数のズレ事故を避ける）
             df_raw, weather = fetch_race_json(race_date, int(stadium), int(race_no))
         except Exception as e:
             st.error(f"❌ 取得失敗: {e}")
+            st.exception(e)
             st.stop()
 
-    if df_raw is None or df_raw.empty:
+    if df_raw is None or (hasattr(df_raw, "empty") and df_raw.empty):
         st.error("❌ データが空です（場コード/日付/レースが違う可能性）")
         st.stop()
 
     st.success("✅ 取得成功")
 
+    # ---- Show fetched ----
     st.subheader("📋 出走表＋展示（取得データ）")
-    st.dataframe(df_raw, use_container_width=True, hide_index=True)
+    try:
+        st.dataframe(df_raw, use_container_width=True, hide_index=True)
+    except Exception:
+        # もしdf_rawがDataFrameでないケースでも表示できるよう保険
+        st.write(df_raw)
 
     st.subheader("🌤 気象")
     st.json(weather)
 
+    # ---- Feature ----
     with st.spinner("特徴量作成中..."):
-        df_feat = build_features(df_raw)
+        try:
+            df_feat = build_features(df_raw, weather=weather)
+        except TypeError:
+            # build_features が weather 引数を取らない場合に備えてフォールバック
+            df_feat = build_features(df_raw)
+        except Exception as e:
+            st.error("❌ 特徴量作成失敗")
+            st.exception(e)
+            st.stop()
 
-    # ここが重要：モデルが無いなら予測しない
-    if model1 is None or model2 is None or model3 is None:
-        st.error("❌ モデルが読み込めていないため予測できません（model1-3.pkl を確認）")
-        if model_error:
-            st.caption(f"詳細: {model_error}")
-        st.stop()
+    st.subheader("🧪 特徴量（先頭）")
+    st.dataframe(df_feat.head(), use_container_width=True, hide_index=True)
 
+    # ---- Predict ----
     with st.spinner("LightGBM予測中..."):
         try:
-            df_pred = predict_trifecta(model1, model2, model3, df_feat, top_n=top_n)
+            df_pred = predict_trifecta(model1, model2, model3, df_feat, top_n=int(top_n))
         except Exception as e:
-            st.error(f"❌ 予測失敗: {e}")
+            st.error("❌ 予測失敗（詳細）")
+            st.exception(e)
             st.stop()
 
     st.subheader("🎯 三連単予測（スコア上位）")
