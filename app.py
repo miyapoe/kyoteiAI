@@ -144,7 +144,7 @@ st.warning("※ モデル未読込（データ取得のみ動作）")
 if st.button("取得＆予測", use_container_width=True):
     with st.spinner("データ取得中..."):
         try:
-            df_raw, weather = fetch_race_json(race_date=race_date, stadium=int(stadium), race_no=int(race_no))
+            df_raw, weather = fetch_race_json(race_date, int(stadium), int(race_no))
         except Exception as e:
             st.error(f"❌ 取得失敗: {e}")
             st.stop()
