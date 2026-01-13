@@ -21,6 +21,12 @@ if st.button("予測する"):
             # 🔽 ここで中身を表示
 st.write("📋 取得したデータの中身：")
 st.write(df_raw)
+
+# 🟡 ここで空チェックを追加！
+            if df_raw.empty:
+                st.error("❌ データが取得できませんでした。レースが存在しないか、HTML構造が変わった可能性があります。")
+                st.stop()
+
         except Exception as e:
             st.error(f"データ取得に失敗しました: {e}")
             st.stop()
