@@ -1,0 +1,40 @@
+import streamlit as st
+import pandas as pd
+import pickle
+
+@st.cache(allow_output_mutation=True)
+def load_models():
+    try:
+        m1 = pickle.load(open("model1.pkl", "rb"))
+        m2 = pickle.load(open("model2.pkl", "rb"))
+        m3 = pickle.load(open("model3.pkl", "rb"))
+        return m1, m2, m3
+    except:
+        return None, None, None
+
+model1, model2, model3 = load_models()
+
+st.title("🚤 AI三連単 期待値予測アプリ")
+
+jcd = st.text_input("場コード（例: 20）", "")
+rno = st.text_input("レース番号（例: 1）", "")
+hd = st.text_input("開催日（YYYYMMDD）", "")
+top_n = st.slider("上位何件を表示？", 5, 50, 10)
+
+if st.button("予測する！"):
+    if not (jcd and rno and hd):
+        st.error("場コード、レース番号、開催日を入力してください。")
+    else:
+        if model1 is None:
+            st.error("モデルを読み込めませんでした。モデルファイルをアップしてください。")
+        else:
+            from utils import predict_trifecta_with_expected_value
+            try:
+                df = predict_trifecta_with_expected_value(
+                    jcd=jcd, rno=int(rno), hd=hd,
+                    model1=model1, model2=model2, model3=model3,
+                    top_n=top_n
+                )
+                st.dataframe(df)
+            except Exception as e:
+                st.error(f"エラーが発生しました:\n{e}")
