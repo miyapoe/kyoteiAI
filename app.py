@@ -16,9 +16,14 @@ except Exception:
 
 from predict import load_models, predict_trifecta
 
+
+# -----------------------------
+# Page
+# -----------------------------
 st.set_page_config(page_title="競艇AI（JSON取得 + LightGBM予測）", layout="wide")
 st.title("🚤 競艇AI（JSON取得 + LightGBM予測）")
 st.caption("出走表(programs)・展示/気象(previews)を JSON から取得して表示。モデルがあれば三連単予測もします。")
+
 
 # -----------------------------
 # Inputs
@@ -37,14 +42,19 @@ with c3:
 with c4:
     top_n = st.slider("表示件数（予測）", min_value=5, max_value=30, value=10, step=1)
 
+
 # -----------------------------
-# Model file check
+# Helpers
 # -----------------------------
 def _file_info(path: str) -> str:
     if not os.path.exists(path):
         return "missing"
     return f"exists size={os.path.getsize(path)}"
 
+
+# -----------------------------
+# Model file check
+# -----------------------------
 with st.expander("📦 モデルファイルチェック", expanded=False):
     candidates = [
         "model1.txt", "model2.txt", "model3.txt",
@@ -55,6 +65,7 @@ with st.expander("📦 モデルファイルチェック", expanded=False):
     ]
     for fn in candidates:
         st.write(f"- {fn}: {_file_info(fn)}")
+
 
 # -----------------------------
 # Load models (cached)
@@ -70,6 +81,7 @@ if model1 is None or model2 is None or model3 is None:
 else:
     st.success(f"✅ モデル読込OK: {model_info}")
 
+
 # -----------------------------
 # Run
 # -----------------------------
@@ -77,7 +89,7 @@ if st.button("取得＆予測", use_container_width=True):
     # ---- Fetch ----
     with st.spinner("データ取得中..."):
         try:
-            # ★ keyword ではなく位置引数で固定（race_date問題回避）
+            # keywordではなく位置引数で固定（race_dateのkeywordズレ事故回避）
             df_raw, weather = fetch_race_json(race_date, int(stadium), int(race_no))
         except Exception as e:
             st.error(f"❌ 取得失敗: {e}")
@@ -98,7 +110,6 @@ if st.button("取得＆予測", use_container_width=True):
     # ---- Features ----
     with st.spinner("特徴量作成中..."):
         if build_features is None:
-            # 最低限フォールバック（数値列だけ）
             df_feat = df_raw.select_dtypes(include=["number"]).copy()
         else:
             df_feat = build_features(df_raw)
@@ -107,7 +118,7 @@ if st.button("取得＆予測", use_container_width=True):
         st.error("❌ 特徴量が空です（features.py の処理を確認）")
         st.stop()
 
-    # ★ 念のため数値だけ（モデルが数値前提）
+    # 念のため数値のみ
     df_feat = df_feat.select_dtypes(include=["number"]).copy()
 
     st.subheader("🧪 特徴量（先頭）")
@@ -118,6 +129,8 @@ if st.button("取得＆予測", use_container_width=True):
         st.error("❌ モデルが読み込めていないため予測できません（model1-3.txt を配置してください）")
         st.stop()
 
+    st.info("🔎 デバッグ: verbose_align=True（モデル特徴量と一致しているかLogsに出します）")
+
     with st.spinner("LightGBM予測中..."):
         try:
             df_pred = predict_trifecta(
@@ -125,6 +138,7 @@ if st.button("取得＆予測", use_container_width=True):
                 df_feat,
                 df_raw=df_raw,
                 top_n=int(top_n),
+                verbose_align=True,   # ★これが重要
             )
         except Exception as e:
             st.error(f"❌ 予測失敗: {e}")
