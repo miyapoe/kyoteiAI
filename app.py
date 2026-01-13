@@ -1,136 +1,101 @@
 # app.py
 import os
 import streamlit as st
-import joblib
 import pandas as pd
 
 from scraper import fetch_race_json
-from predict import build_features, predict_trifecta
 
+# features.py 側の関数名ブレに耐える
+try:
+    from features import create_features as build_features
+except Exception:
+    try:
+        from features import build_features  # type: ignore
+    except Exception:
+        build_features = None  # 後でフォールバック
+
+from predict import load_models, predict_trifecta
+
+st.set_page_config(page_title="競艇AI（JSON取得 + LightGBM予測）", layout="wide")
+st.title("🚤 競艇AI（JSON取得 + LightGBM予測）")
+st.caption("出走表(programs)・展示/気象(previews)を JSON から取得して表示。モデルがあれば三連単予測もします。")
 
 # -----------------------------
-# Page
+# Inputs
 # -----------------------------
-st.set_page_config(page_title="競艇AI（JSON取得＋LightGBM予測）", layout="wide")
-st.title("🚤 競艇AI（JSON取得＋LightGBM予測）")
+c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
 
-
-# -----------------------------
-# Sidebar / Inputs
-# -----------------------------
-col1, col2, col3, col4 = st.columns([2, 2, 2, 2])
-
-with col1:
+with c1:
     race_date = st.text_input("開催日（YYYYMMDD）", value="20260112")
 
-with col2:
-    # あなたのUIの通り「ここは1」前提にしているなら default=1
-    stadium = st.number_input("場コード（※ここは1）", min_value=1, max_value=30, value=1, step=1)
+with c2:
+    stadium = st.number_input("場コード（race_stadium_number）", min_value=1, max_value=30, value=1, step=1)
 
-with col3:
-    race_no = st.number_input("レース番号", min_value=1, max_value=12, value=1, step=1)
+with c3:
+    race_no = st.number_input("レース番号（1〜12）", min_value=1, max_value=12, value=1, step=1)
 
-with col4:
-    top_n = st.slider("表示件数（予測）", min_value=1, max_value=30, value=10, step=1)
-
+with c4:
+    top_n = st.slider("表示件数（予測）", min_value=5, max_value=30, value=10, step=1)
 
 # -----------------------------
-# Utils
+# Model load (safe)
 # -----------------------------
-def _validate_date(s: str) -> bool:
-    return isinstance(s, str) and len(s) == 8 and s.isdigit()
+with st.expander("📦 モデルファイルチェック", expanded=False):
+    for fn in ["model1.txt", "model2.txt", "model3.txt", "model1.pkl", "model2.pkl", "model3.pkl"]:
+        st.write(f"- {fn}: exists={os.path.exists(fn)} size={os.path.getsize(fn) if os.path.exists(fn) else 0}")
 
-
-@st.cache_resource
-def load_models_debug():
-    """モデル存在確認→ロード。失敗したら例外を上へ投げる"""
-    paths = ["model1.pkl", "model2.pkl", "model3.pkl"]
-
-    st.write("### 📦 モデルファイルチェック")
-    for p in paths:
-        exists = os.path.exists(p)
-        size = os.path.getsize(p) if exists else None
-        st.write(f"- `{p}` exists={exists} size={size}")
-
-    m1 = joblib.load(paths[0])
-    m2 = joblib.load(paths[1])
-    m3 = joblib.load(paths[2])
-    return m1, m2, m3
-
-
-# -----------------------------
-# Model load (A: show real error)
-# -----------------------------
-st.info("※ まずモデルを読み込みます（失敗時は詳細を表示して停止します）")
-
-try:
-    model1, model2, model3 = load_models_debug()
-    st.success("✅ モデル読込OK")
-except Exception as e:
-    st.error("❌ モデルロード失敗（詳細）")
-    st.exception(e)
-    st.stop()
-
+model1, model2, model3, model_info = load_models()
+if model1 is None or model2 is None or model3 is None:
+    st.warning("※ モデル未読込（データ取得のみ動作）")
+else:
+    st.success(f"✅ モデル読込OK: {model_info}")
 
 # -----------------------------
 # Run
 # -----------------------------
 if st.button("取得＆予測", use_container_width=True):
-    if not _validate_date(race_date):
-        st.error("❌ 開催日は YYYYMMDD（8桁数字）で入力してください")
-        st.stop()
-
-    # ---- Fetch ----
     with st.spinner("データ取得中..."):
         try:
-            # 位置引数で呼ぶ（キーワード引数のズレ事故を避ける）
             df_raw, weather = fetch_race_json(race_date, int(stadium), int(race_no))
         except Exception as e:
             st.error(f"❌ 取得失敗: {e}")
-            st.exception(e)
             st.stop()
 
-    if df_raw is None or (hasattr(df_raw, "empty") and df_raw.empty):
-        st.error("❌ データが空です（場コード/日付/レースが違う可能性）")
+    if df_raw is None or df_raw.empty:
+        st.error("❌ データが空です（場コード/日付/レースが違う or APIにデータが無い可能性）")
         st.stop()
 
     st.success("✅ 取得成功")
 
-    # ---- Show fetched ----
     st.subheader("📋 出走表＋展示（取得データ）")
-    try:
-        st.dataframe(df_raw, use_container_width=True, hide_index=True)
-    except Exception:
-        # もしdf_rawがDataFrameでないケースでも表示できるよう保険
-        st.write(df_raw)
+    st.dataframe(df_raw, use_container_width=True, hide_index=True)
 
     st.subheader("🌤 気象")
     st.json(weather)
 
-    # ---- Feature ----
+    # 特徴量
     with st.spinner("特徴量作成中..."):
-        try:
-            df_feat = build_features(df_raw, weather=weather)
-        except TypeError:
-            # build_features が weather 引数を取らない場合に備えてフォールバック
+        if build_features is None:
+            # 最低限フォールバック（数値列だけ）
+            df_feat = df_raw.select_dtypes(include=["number"]).copy()
+        else:
             df_feat = build_features(df_raw)
-        except Exception as e:
-            st.error("❌ 特徴量作成失敗")
-            st.exception(e)
-            st.stop()
 
     st.subheader("🧪 特徴量（先頭）")
-    st.dataframe(df_feat.head(), use_container_width=True, hide_index=True)
+    st.dataframe(df_feat.head(10), use_container_width=True, hide_index=True)
 
-    # ---- Predict ----
+    # 予測
+    if model1 is None or model2 is None or model3 is None:
+        st.error("❌ モデルが読み込めていないため予測できません（model1-3 を作り直して配置してください）")
+        st.stop()
+
     with st.spinner("LightGBM予測中..."):
         try:
-            df_pred = predict_trifecta(model1, model2, model3, df_feat, top_n=int(top_n))
+            df_pred = predict_trifecta(model1, model2, model3, df_feat, df_raw=df_raw, top_n=int(top_n))
         except Exception as e:
-            st.error("❌ 予測失敗（詳細）")
-            st.exception(e)
+            st.error(f"❌ 予測失敗: {e}")
             st.stop()
 
     st.subheader("🎯 三連単予測（スコア上位）")
     st.dataframe(df_pred, use_container_width=True, hide_index=True)
-    st.caption("※ scoreは各着順モデルの確率を掛け合わせた近似スコアです。")
+    st.caption("※ score は 1着×2着×3着 の確率を掛け合わせた近似スコアです。")
