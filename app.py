@@ -18,6 +18,7 @@ if st.button("予測する"):
     with st.spinner("データ取得中..."):
         try:
             df_raw = scrape_race_data(place, race_no, race_date)
+            st.write(df_raw)
         except Exception as e:
             st.error(f"データ取得に失敗しました: {e}")
             st.stop()
