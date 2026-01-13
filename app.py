@@ -136,7 +136,7 @@ def predict_trifecta(model1, model2, model3, df_feat: pd.DataFrame, top_n: int =
 # -----------------------------
 # Run
 # -----------------------------
-try:
+
     model1 = model2 = model3 = None
 st.warning("※ モデル未読込（データ取得のみ動作）")
 
