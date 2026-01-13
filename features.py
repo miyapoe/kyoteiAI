@@ -1,63 +1,54 @@
-# features.py
 import pandas as pd
 import numpy as np
 
 def _num(s):
     return pd.to_numeric(s, errors="coerce")
 
-def build_features(df_raw: pd.DataFrame, stadium: int = 1, race_no: int = 1) -> pd.DataFrame:
-    """
-    df_raw(JSON取得結果) -> モデル入力用特徴量
-    - 予測時に必要な列を必ず作る
-    - label_* は推論では不要なので落とす
-    """
-    if df_raw is None or df_raw.empty:
+def build_features(df: pd.DataFrame, stadium: int = 1, race_no: int = 1) -> pd.DataFrame:
+    if df is None or df.empty:
         return pd.DataFrame()
 
-    df = df_raw.copy()
+    x = df.copy()
 
-    # --- 推論では不要（学習ラベル）を落とす ---
-    for c in ["label_1st", "label_2nd", "label_3rd"]:
-        if c in df.columns:
-            df = df.drop(columns=[c])
-
-    # --- 必須の追加6列（モデルが要求してたやつ） ---
-    df["race_no"] = int(race_no)
-    df["stadium"] = int(stadium)
-
-    # lane は艇番でOK（1〜6）
-    if "lane" not in df.columns:
-        if "racer_boat_number" in df.columns:
-            df["lane"] = df["racer_boat_number"]
-        else:
-            df["lane"] = np.arange(1, len(df) + 1)
-
-    # exh_st_rank：展示STの順位（小さい方が良い）
-    if "racer_start_timing" in df.columns:
-        df["exh_st_rank"] = _num(df["racer_start_timing"]).rank(method="min", ascending=True)
-    else:
-        df["exh_st_rank"] = 0
-
-    # f_penalty / l_penalty：F/L回数をそのまま入れる（最低限）
-    df["f_penalty"] = _num(df["racer_flying_count"]) if "racer_flying_count" in df.columns else 0
-    df["l_penalty"] = _num(df["racer_late_count"]) if "racer_late_count" in df.columns else 0
-
-    # --- 数値化（モデルに入れる列が object だと事故るので全部数値に寄せる） ---
-    for c in df.columns:
-        if c in ["racer_name"]:  # 文字列は使わない
+    # --- 文字列→数値化（必要なら） ---
+    for c in x.columns:
+        if c in ["racer_name"]:
             continue
-        if df[c].dtype == "object":
-            df[c] = _num(df[c])
+        if x[c].dtype == "object":
+            x[c] = _num(x[c])
 
-    # --- 使わない文字列列を落とす ---
-    if "racer_name" in df.columns:
-        df = df.drop(columns=["racer_name"])
+    # --- 追加6列（モデルが欲しがるやつ） ---
+    if "race_no" not in x.columns:
+        x["race_no"] = race_no
+    else:
+        x["race_no"] = race_no
 
-    # --- 欠損埋め ---
-    df = df.fillna(0)
+    if "stadium" not in x.columns:
+        x["stadium"] = stadium
+    else:
+        x["stadium"] = stadium
 
-    return df
+    if "lane" not in x.columns and "racer_boat_number" in x.columns:
+        x["lane"] = x["racer_boat_number"]
 
-# 旧名互換（app側で create_features を探すことがあるため）
+    if "exh_st_rank" not in x.columns and "racer_start_timing" in x.columns:
+        x["exh_st_rank"] = x["racer_start_timing"].rank(method="min")
+
+    for c in ["f_penalty", "l_penalty"]:
+        if c not in x.columns:
+            x[c] = 0
+
+    # --- 使わない列（文字列）を落とす ---
+    x = x.drop(columns=["racer_name"], errors="ignore")
+
+    # ✅ 超重要：label列は予測時に絶対いらないので落とす
+    x = x.drop(columns=[c for c in x.columns if str(c).startswith("label_")], errors="ignore")
+
+    # 欠損埋め
+    x = x.fillna(0)
+
+    return x
+
+# 互換用（app.py が create_features を探す場合に備える）
 def create_features(df: pd.DataFrame) -> pd.DataFrame:
     return build_features(df)
