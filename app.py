@@ -23,7 +23,7 @@ if st.button("予測する"):
             st.write(df_raw)
 
 # 🟡 ここで空チェックを追加！
-             if df_raw.empty:
+            if df_raw.empty:
                 st.error("❌ データが取得できませんでした。レースが存在しないか、HTML構造が変わった可能性があります。")
                 st.stop()
 
